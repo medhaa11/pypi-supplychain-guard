@@ -43,7 +43,8 @@ RE_B64 = re.compile(r"^[A-Za-z0-9+/=\s]+$")
 
 KEYS = ["files", "lines", "bytes", "parse_fail", "calls", "exec_eval", "dyn_import", "proc", "net",
         "decode", "env", "sysinfo", "fs", "obf", "imp_net", "imp_proc", "cmdclass", "cmd_subclass",
-        "long_str", "hi_ent_str", "b64_blob", "sens", "urls", "ips", "exfil"]
+        "long_str", "hi_ent_str", "b64_blob", "sens", "urls", "ips", "exfil",
+        "top_calls", "top_exec_eval", "top_proc", "top_net", "top_decode"]
 
 
 def entropy(s):
@@ -62,7 +63,7 @@ def dotted(node):
     return None
 
 
-def analyze_py(src):
+def analyze_py(src, is_setup=False):
     f = Counter()
     f["lines"] = src.count(b"\n") + 1
     f["bytes"] = len(src)
@@ -99,6 +100,34 @@ def analyze_py(src):
     def resolve(n):
         first, *rest = n.split(".")
         return ".".join([alias.get(first, first)] + rest)
+
+    def top_level(n):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            return
+        if (not is_setup and isinstance(n, ast.If) and isinstance(n.test, ast.Compare)
+                and isinstance(n.test.left, ast.Name) and n.test.left.id == "__name__"):
+            return
+        if isinstance(n, ast.Call):
+            d = dotted(n.func)
+            if d:
+                d = resolve(d)
+                f["top_calls"] += 1
+                if d in EXEC:
+                    f["top_exec_eval"] += 1
+                if (d.startswith("subprocess.") or d in ("os.system", "os.popen", "pty.spawn")
+                        or d.startswith(("os.spawn", "os.exec"))):
+                    f["top_proc"] += 1
+                if d.startswith(NET_PREFIX) and d not in SYSINFO and not d.startswith("urllib.parse."):
+                    f["top_net"] += 1
+                if d in DECODE:
+                    f["top_decode"] += 1
+        for c in ast.iter_child_nodes(n):
+            top_level(c)
+
+    try:
+        top_level(tree)
+    except RecursionError:
+        pass
 
     max_ent = 0.0
     for node in nodes:
@@ -202,7 +231,7 @@ def extract(path):
         if not p.endswith(".py"):
             continue
         sc = "setup" if p == "setup.py" else "pkg"
-        f = analyze_py(data)
+        f = analyze_py(data, is_setup=(sc == "setup"))
         mx[sc] = max(mx[sc], f.pop("max_ent", 0.0))
         scopes[sc].update(f)
         scopes[sc]["files"] += 1
