@@ -211,8 +211,8 @@ def metadata_features(arc):
     return out
 
 
-def extract(path):
-    arc = read_archive(path)
+def extract(path, data=None):
+    arc = read_archive(path, data)
     if not arc.all_paths:
         return None
     s = set(arc.all_paths)
@@ -224,6 +224,7 @@ def extract(path):
         "s_has_setup_cfg": int("setup.cfg" in s),
         "s_is_wheel": int(any(".dist-info/" in x for x in arc.all_paths)),
         "s_truncated": int(arc.truncated),
+        "x_mtime_max": arc.mtime_max,
     }
     scopes = {"setup": Counter(), "pkg": Counter()}
     mx = {"setup": 0.0, "pkg": 0.0}

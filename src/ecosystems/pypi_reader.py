@@ -3,7 +3,9 @@
 Never writes to disk, never imports or executes anything from the archive.
 Normalizes away dataset-packaging artifacts so both groups look the same.
 """
+import io
 import re
+import time
 import tarfile
 import zipfile
 from dataclasses import dataclass, field
@@ -27,6 +29,7 @@ class Archive:
     all_paths: list = field(default_factory=list)
     files: dict = field(default_factory=dict)  # cleaned path -> bytes (wanted files only)
     truncated: bool = False
+    mtime_max: float = 0.0
 
 
 def _strip_wrappers(parts):
@@ -88,21 +91,29 @@ def _wanted(path):
     return path.endswith(WANTED_EXT) or path.rsplit("/", 1)[-1] in WANTED_NAMES
 
 
-def read_archive(path):
-    entries = []
+def read_archive(path, data=None):
+    """Format is decided by the suffix of `path`; `data` (bytes) replaces reading from disk."""
+    entries = []  # (raw_name, size, reader_fn)
+    mt = []
     if path.endswith((".zip", ".whl")):
-        zf = zipfile.ZipFile(path)
+        zf = zipfile.ZipFile(io.BytesIO(data) if data is not None else path)
         for info in zf.infolist():
             if not info.is_dir():
                 entries.append((info.filename, info.file_size,
                                 lambda i=info: zf.read(i, pwd=ZIP_PWD)))
+                try:
+                    mt.append(time.mktime(tuple(info.date_time) + (0, 0, -1)))
+                except Exception:
+                    pass
     else:
-        tf = tarfile.open(path)
+        tf = tarfile.open(fileobj=io.BytesIO(data)) if data is not None else tarfile.open(path)
         for m in tf.getmembers():
             if m.isfile():
                 entries.append((m.name, m.size, lambda m=m: tf.extractfile(m).read()))
+                mt.append(m.mtime)
 
     arc = Archive()
+    arc.mtime_max = max(mt) if mt else 0.0
     if len(entries) > MAX_FILES:
         entries = entries[:MAX_FILES]
         arc.truncated = True
