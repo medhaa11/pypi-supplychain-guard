@@ -95,7 +95,8 @@ def read_archive(path, data=None):
     """Format is decided by the suffix of `path`; `data` (bytes) replaces reading from disk."""
     entries = []  # (raw_name, size, reader_fn)
     mt = []
-    if path.endswith((".zip", ".whl")):
+    is_zip = path.endswith((".zip", ".whl")) or (data is not None and data[:4] == b"PK\x03\x04")
+    if is_zip:
         zf = zipfile.ZipFile(io.BytesIO(data) if data is not None else path)
         for info in zf.infolist():
             if not info.is_dir():
